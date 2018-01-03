@@ -31,11 +31,13 @@ int main()
 	        list_for_each(pos, &cc_ctx.list) {
 		        max = list_entry(pos, struct cc_ops, list);
 			    if (max->ref > tmp->ref) {
+				//add tmp node to before of max node.
 		           list_add_tail(&tmp->list, &max->list);
 				   break;
 			    }
 	        }
 			if (max->ref <= tmp->ref)
+				//add to list tail
 		        list_add_tail(&tmp->list, &cc_ctx.list);
 	    }
 	}
