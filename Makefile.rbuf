@@ -1,0 +1,7 @@
+.PHONY: rbuf_test clean
+
+rbuf_test: rbuf_test.c ring_buffer.c
+	@gcc -o $@ $^ -lpthread
+
+clean:
+	@rm -rf rbuf_test
