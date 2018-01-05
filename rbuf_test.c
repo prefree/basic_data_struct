@@ -77,6 +77,7 @@ void * write_func(void *arg)
 		usleep(get_delay_time()*1000);
 	} while (ctx->running);
 }
+
 void create_input_file()
 {
 	char cmd[512];
@@ -85,6 +86,7 @@ void create_input_file()
 	sprintf(cmd, "cat /proc/cpuinfo > %s", INPUT_FILE);
 	system(cmd);
 }
+
 int main(int argc, char **argv)
 {
 	pthread_t rt, wt;
@@ -94,6 +96,8 @@ int main(int argc, char **argv)
     struct rtest ctx;
 
 	ctx.running = 1;
+	ctx.input_fp = NULL;
+	ctx.output_fp = NULL;
 	create_input_file();
 	if (access(INPUT_FILE, R_OK)) {
 		printf("%s -> %s\n", INPUT_FILE, strerror(errno));
@@ -131,5 +135,10 @@ int main(int argc, char **argv)
     ring_buffer_flush(&ctx.rbuf);
 	if (ctx.rbuf.data)
 		free(ctx.rbuf.data);
+	if (ctx.input_fp)
+		fclose(ctx.input_fp);
+	if (ctx.output_fp)
+		fclose(ctx.output_fp);
+
 	return 0;
 }
