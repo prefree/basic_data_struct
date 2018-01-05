@@ -4,82 +4,113 @@
 #include <errno.h>
 #include <string.h>
 #include <stdlib.h>
+#include <sys/time.h>
 #include "ring_buffer.h"
 
-#define RING_BUFFER_SIZE 20
-#define TEXT_LEN 1000
-#define R_DELAY 500
-#define W_DELAY 1000
-int running = 1;
-char text[TEXT_LEN];
+#define RING_BUFFER_SIZE     20
+#define INPUT_FILE           "input.cap"
+#define OUTPUT_FILE          "output.cap"
+struct rtest {
+	int      running;
+	struct   ring_buffer rbuf;
+	FILE     *input_fp;
+	FILE     *output_fp;
+};
+
+int get_delay_time()
+{
+	struct timeval tv;
+
+	gettimeofday(&tv, NULL);
+	srandom(tv.tv_sec*1000+tv.tv_usec/1000);
+	return random()%10;
+}
+
 void * read_func(void *arg)
 {
-	struct ring_buffer *rbuf;
+	struct rtest *ctx;
 	unsigned char buf[1024];
-	int avail = 0;
+	int avail = 0, len = 0;
 
-	rbuf = (struct ring_buffer *)arg;
+	ctx = (struct rtest*)arg;
+	ctx->output_fp = fopen(OUTPUT_FILE, "w+");
+	if (!ctx->output_fp) {
+		printf("%s, %s -> %s\n", __func__, OUTPUT_FILE, strerror(errno));
+		return NULL;
+	}
 	memset(buf, 0, sizeof(buf));
 	do {
-		avail = ring_buffer_avail(rbuf);
+		avail = ring_buffer_avail(&ctx->rbuf);
 		if (avail) {
-			ring_buffer_read(rbuf, buf, avail);
-			printf("read -> %s\n", buf);
-			memset(buf, 0, sizeof(buf));
+			ring_buffer_read(&ctx->rbuf, buf, avail);
+			len = fwrite(buf, 1, avail, ctx->output_fp);
+			printf("read -> %s, len->%d\n", buf, len);
 		}
-		usleep(R_DELAY*1000);
-	} while (running);
+		usleep(get_delay_time()*1000);
+	} while (ctx->running);
 
 }
 
 void * write_func(void *arg)
 {
-	struct ring_buffer *rbuf;
-	int free = 0, len = 0, left = TEXT_LEN;
+	struct rtest *ctx;
+	int free = 0, len = 0;
+	char buf[32*1024] = {0};
 
-	rbuf = (struct ring_buffer *)arg;
+	ctx = (struct rtest*)arg;
+	ctx->input_fp = fopen(INPUT_FILE, "r");
+	if (!ctx->input_fp) {
+		printf("%s, %s -> %s\n", __func__, INPUT_FILE, strerror(errno));
+		return NULL;
+	}
 	do {
-		free = ring_buffer_free(rbuf);
-		len = (left < free ? left : free);
-		ring_buffer_write(rbuf, text+TEXT_LEN-left, len);
-		left -= len;
-		if (!left) {
-			left = TEXT_LEN;
-		} else if (left < 0) {
-			printf("write error!\n");
+		free = ring_buffer_free(&ctx->rbuf);
+		len = fread(buf, 1, free, ctx->input_fp);
+		if (len) {
+		    ring_buffer_write(&ctx->rbuf, buf, len);
+		    printf("write -> %d \n", len);
+		}
+		if (feof(ctx->input_fp)) {
+			printf("%s read eof\n", INPUT_FILE);
 			break;
 		}
-		sleep(W_DELAY*1000);
-	} while (running);
+		usleep(get_delay_time()*1000);
+	} while (ctx->running);
 }
-void text_fill()
+void create_input_file()
 {
-	int i;
-	for (i=0; i<TEXT_LEN; i+=10) {
-		memcpy(text+i, "0123456789", 10);
-	}
+	char cmd[512];
+
+	memset(cmd, 0, sizeof(cmd));
+	sprintf(cmd, "cat /proc/cpuinfo > %s", INPUT_FILE);
+	system(cmd);
 }
 int main(int argc, char **argv)
 {
 	pthread_t rt, wt;
-	struct ring_buffer rbuf;
 	int ret;
 	unsigned char *buf;
 	unsigned char fbuf[256];
+    struct rtest ctx;
 
-	text_fill();
+	ctx.running = 1;
+	create_input_file();
+	if (access(INPUT_FILE, R_OK)) {
+		printf("%s -> %s\n", INPUT_FILE, strerror(errno));
+		return 1;
+	}
 	buf = malloc(RING_BUFFER_SIZE);
 	if (!buf) {
 		printf("malloc failed\n");
 		return 1;
 	}
-	ring_buffer_init(&rbuf, buf, RING_BUFFER_SIZE);
-	ret = pthread_create(&rt, NULL, read_func, (void *)&rbuf);
+	ring_buffer_init(&ctx.rbuf, buf, RING_BUFFER_SIZE);
+	ret = pthread_create(&rt, NULL, read_func, (void *)&ctx);
 	if (ret) {
 		printf("read thread create failed: %s\n", strerror(errno));
 		return 1;
 	}
-	ret = pthread_create(&wt, NULL, write_func, (void *)&rbuf);
+	ret = pthread_create(&wt, NULL, write_func, (void *)&ctx);
 	if (ret) {
 		printf("write thread create failed: %s\n", strerror(errno));
 		return 1;
@@ -88,7 +119,7 @@ int main(int argc, char **argv)
 	for (;;) {
 		if (fgets(fbuf, 256, stdin)) {
 			if (!strncmp(fbuf, "quit", 4)) {
-				running = 0;
+				ctx.running = 0;
 				printf("quit app\n");
 				break;
 			}
@@ -97,8 +128,8 @@ int main(int argc, char **argv)
 
 	pthread_join(rt, NULL);
 	pthread_join(wt, NULL);
-    ring_buffer_flush(&rbuf);
-	if (rbuf.data)
-		free(rbuf.data);
+    ring_buffer_flush(&ctx.rbuf);
+	if (ctx.rbuf.data)
+		free(ctx.rbuf.data);
 	return 0;
 }
